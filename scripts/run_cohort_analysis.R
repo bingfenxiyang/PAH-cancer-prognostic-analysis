@@ -51,12 +51,12 @@ run_cohort_analysis <- function(cancer, figure_id, training_expression, training
 
 run_configured_cohort <- function(cancer_code, seed = 123L) {
   cfg <- read.csv(here::here("config", "cohorts.csv"), stringsAsFactors = FALSE)
-  z <- cfg[cfg$cancer == cancer_code, , drop = FALSE]
-  if (nrow(z) != 1L) stop("Expected exactly one configuration row for ", cancer_code)
+  cohort_config <- cfg[cfg$cancer == cancer_code, , drop = FALSE]
+  if (nrow(cohort_config) != 1L) stop("Expected exactly one configuration row for ", cancer_code)
   resolve <- function(path) here::here(strsplit(path, "/", fixed = TRUE)[[1]])
   candidate_genes <- scan(here::here("config", "candidate_genes.txt"), what = "character", quiet = TRUE)
-  run_cohort_analysis(cancer = z$cancer, figure_id = z$figure,
-    training_expression = resolve(z$training_expression), training_clinical = resolve(z$training_clinical),
-    validation_expression = resolve(z$validation_expression), validation_clinical = resolve(z$validation_clinical),
-    output_dir = resolve(z$output_dir), candidate_genes = candidate_genes, seed = seed)
+  run_cohort_analysis(cancer = cohort_config$cancer, figure_id = cohort_config$figure,
+    training_expression = resolve(cohort_config$training_expression), training_clinical = resolve(cohort_config$training_clinical),
+    validation_expression = resolve(cohort_config$validation_expression), validation_clinical = resolve(cohort_config$validation_clinical),
+    output_dir = resolve(cohort_config$output_dir), candidate_genes = candidate_genes, seed = seed)
 }

@@ -5,11 +5,11 @@ assert_columns <- function(data, required, label) {
 
 read_patient_table <- function(path, label) {
   if (!file.exists(path)) stop("Missing ", label, ": ", path)
-  x <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
-  assert_columns(x, "sample_id", label)
-  x$sample_id <- gsub("\\.", "-", trimws(x$sample_id))
-  if (anyNA(x$sample_id) || anyDuplicated(x$sample_id)) stop(label, " contains missing or duplicated sample_id values")
-  x
+  patient_table <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+  assert_columns(patient_table, "sample_id", label)
+  patient_table$sample_id <- gsub("\\.", "-", trimws(patient_table$sample_id))
+  if (anyNA(patient_table$sample_id) || anyDuplicated(patient_table$sample_id)) stop(label, " contains missing or duplicated sample_id values")
+  patient_table
 }
 
 prepare_survival_data <- function(expression_path, clinical_path, candidate_genes) {
@@ -50,10 +50,10 @@ run_univariable_cox <- function(data, genes) {
 
 run_lasso_cox <- function(data, genes, seed = 123L) {
   set.seed(seed)
-  x <- as.matrix(data[, genes, drop = FALSE])
-  y <- survival::Surv(data$OS_time, data$OS_status)
-  cv <- glmnet::cv.glmnet(x, y, family = "cox", nfolds = 10, type.measure = "deviance")
-  fit <- glmnet::glmnet(x, y, family = "cox")
+  expression_matrix <- as.matrix(data[, genes, drop = FALSE])
+  survival_outcome <- survival::Surv(data$OS_time, data$OS_status)
+  cv <- glmnet::cv.glmnet(expression_matrix, survival_outcome, family = "cox", nfolds = 10, type.measure = "deviance")
+  fit <- glmnet::glmnet(expression_matrix, survival_outcome, family = "cox")
   beta <- as.matrix(stats::coef(cv, s = "lambda.min"))[, 1]
   selected <- names(beta)[beta != 0]
   list(cv = cv, fit = fit, selected_genes = selected,
@@ -97,4 +97,3 @@ write_model_formula <- function(coefficients, path) {
   terms <- sprintf("(%0.8f x %s)", coefficients$coefficient, coefficients$gene)
   writeLines(c(paste("LP =", paste(terms, collapse = " + ")), "Relative risk = exp(LP)"), path)
 }
-

@@ -6,7 +6,7 @@ This repository curates the supplied draft code for univariable Cox screening, L
 
 ## Repository structure
 
-- `original_code/`: immutable backup of the supplied draft.
+- `original_code/`: English provenance record and checksum for the private source draft retained offline by the authors.
 - `R/`: reusable validation and modeling functions.
 - `scripts/`: numbered analysis scripts and figure export code.
 - `config/`: cohort-to-figure map and candidate genes.
@@ -69,4 +69,3 @@ Complete the statements in `reports/publication_statements.md` only after the da
 ## Citation and contact
 
 Complete `CITATION.cff` and add the corresponding author's institutional email before public release. Do not publish private contact information without author approval.
-

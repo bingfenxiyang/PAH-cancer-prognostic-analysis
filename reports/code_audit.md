@@ -24,7 +24,7 @@
 
 - Repeated package loading, duplicated plotting code, debugging prose, Unicode symbols outside comments, calls to `dev.off()` without a guaranteed open device, absolute/implicit paths, and ad hoc output names were removed from executable scripts.
 - English names, relative paths, fixed seeds, deterministic output directories, model metadata, coefficients, and formulas were added.
-- The original file is retained unchanged under `original_code/`.
+- The original non-English working draft is retained offline by the authors. The public repository contains an English provenance record and its SHA-256 checksum under `original_code/`.
 
 ## Author input needed before full reproduction
 
@@ -33,4 +33,3 @@
 - Confirmation of whether the displayed validation curves were produced by model refitting or frozen-model application.
 - Final cohort-specific selected genes, coefficients, risk cutoffs, sample counts, event counts, AUCs, and complete figure legends.
 - Whether raw-P screening must remain the primary analysis or whether an FDR/sensitivity analysis can be added.
-
