@@ -1,0 +1,4 @@
+RUNTIME_NOT_AVAILABLE_DURING_CODE_CURRATION
+
+The local execution environment did not provide Rscript. Run the complete workflow in the intended R environment, then replace this file with the output of sessionInfo(). Do not report software versions until they have been captured from an actual run.
+

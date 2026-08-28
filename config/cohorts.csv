@@ -1,0 +1,7 @@
+cancer,figure,training_expression,training_clinical,validation_expression,validation_clinical,output_dir
+LGG,Figure7,data/processed/LGG_expression.csv,data/processed/LGG_clinical.csv,data/processed/LGG_validation_expression.csv,data/processed/LGG_validation_clinical.csv,results/Figure7_LGG
+LUAD,Figure8,data/processed/LUAD_expression.csv,data/processed/LUAD_clinical.csv,data/processed/LUAD_validation_expression.csv,data/processed/LUAD_validation_clinical.csv,results/Figure8_LUAD
+LIHC,Figure9,data/processed/LIHC_expression.csv,data/processed/LIHC_clinical.csv,data/processed/LIHC_validation_expression.csv,data/processed/LIHC_validation_clinical.csv,results/Figure9_LIHC
+PAAD,SupplementaryFigure2,data/processed/PAAD_expression.csv,data/processed/PAAD_clinical.csv,data/processed/PAAD_validation_expression.csv,data/processed/PAAD_validation_clinical.csv,results/SupplementaryFigure2_PAAD
+LAML,SupplementaryFigure3,data/processed/LAML_expression.csv,data/processed/LAML_clinical.csv,data/processed/LAML_validation_expression.csv,data/processed/LAML_validation_clinical.csv,results/SupplementaryFigure3_LAML
+

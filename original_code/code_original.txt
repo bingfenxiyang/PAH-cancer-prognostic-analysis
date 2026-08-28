@@ -1,0 +1,919 @@
+
+data=read.csv("data.csv",row.names = 1) #(此时列名为样本)
+# 将所有列名中的 "." 替换为 "-"
+colnames(data) <- gsub("\\.", "-", colnames(data))
+
+genes <- c(
+  "AKT1","AR","BCL2","BCL2L1","CASP3","CCNA2","CCND1","CDC42",
+  "CDK2","CDKN1A","CDKN2A","CHUK","CKS1B","E2F1","EGFR","ERBB2",
+  "ESR1","FOS","GRB2","HDAC1","HDAC2","HSP90AA1","IGF1R","JUN",
+  "MAPK1","MDM2","MYC","NFKB1","NFKB2","NFKBIA","PPARG","RB1",
+  "RELA","RUNX1","SMAD3","STAT3","TP53"
+)
+
+data=data[genes,]
+data=as.data.frame(t(data))
+#让data与cli合并名字命名为data
+data$OS=as.numeric(data$OS) ##rrang OS为数值
+data <- data[!is.na(data$OS.time) & data$OS.time > 0, , drop = FALSE]
+##把genes读入，并保留genes的列，同时间将数据集名改为train，生存时间为OS.time，生存状态为OS（生存为0，死亡为1），
+##同时间将数据集名改为td，生存时间为surtime，生存状态为surstat
+
+
+###########################
+#################################
+1.单因素cox分析循环代码
+#1.单因素cox分析循环代码
+library(survival)
+train=cli
+train <- train[!is.na(train$OS.time) & train$OS.time > 0, , drop = FALSE]#保留生存时间大于 0 的样本
+data_gene=data  ##这里的数据是将转置好的data数据以及一一对应的OS  OS.time的数据对应好的
+data_gene<- data_gene[!is.na(data_gene$OS.time) & data_gene$OS.time > 0, , drop = FALSE]
+
+##
+td=data_gene
+# 修改数据集 td 的列名
+names(td)[names(td) == "OS.time"] <- "surtime"
+names(td)[names(td) == "OS"] <- "surstat"
+td$surstat=as.numeric(td$surstat)
+
+outResult = data.frame()
+sigGenes = c("surstat", "surtime")
+
+for(i in colnames(td[, 3:ncol(td)])){
+  tdcox <- coxph(Surv(surtime, surstat) ~ td[, i], data = td)
+  tdcoxSummary = summary(tdcox)
+  pvalue = tdcoxSummary$coefficients[,"Pr(>|z|)"]
+  
+  # 记录基因名
+  sigGenes = c(sigGenes, i)
+  
+  # 无论显著性如何，都保存所有结果
+  outResult = rbind(outResult,
+                    cbind(id = i,
+                          HR = tdcoxSummary$conf.int[,"exp(coef)"],
+                          L95CI = tdcoxSummary$conf.int[,"lower .95"],
+                          H95CI = tdcoxSummary$conf.int[,"upper .95"],
+                          pvalue = pvalue)
+  )
+}
+
+#上面是用来作图的，下面来筛选基因的
+#先看多少显著性的，
+
+
+pFilter=0.05
+outResult=data.frame()
+sigGenes=c("surstat","surtime")
+for(i in colnames(td[,3:ncol(td)])){
+  tdcox <- coxph(Surv(surtime, surstat) ~ td[,i], data = td)
+  tdcoxSummary = summary(tdcox)
+  pvalue=tdcoxSummary$coefficients[,"Pr(>|z|)"]
+  if(pvalue<pFilter){
+    sigGenes=c(sigGenes,i)
+    outResult=rbind(outResult,
+                    cbind(id=i,
+                          HR=tdcoxSummary$conf.int[,"exp(coef)"],
+                          L95CI=tdcoxSummary$conf.int[,"lower .95"],
+                          H95CI=tdcoxSummary$conf.int[,"upper .95"],
+                          pvalue=tdcoxSummary$coefficients[,"Pr(>|z|)"])
+    )
+  }
+}
+
+
+
+##获取显著性的基因
+genes=outResult$id
+
+
+
+
+
+
+
+
+
+
+##################################
+########################################
+2.用LASSO   RF   SVM筛选关键基因  https://mp.weixin.qq.com/s/bieRgEQFwjP4CM9hbBIQ4g
+#2.用LASSO   RF   SVM筛选关键基因  https://mp.weixin.qq.com/s/bieRgEQFwjP4CM9hbBIQ4g
+library(randomForestSRC)
+library(tidyverse)
+library(ggplot2)
+library(ggvenn)
+library(glmnet)
+library(survival)
+library(xgboost)
+
+☆☆☆☆☆☆现在的genes是上步中与c预后相关的基因
+☆☆☆☆☆☆☆现的genes是上步中与c预后相关的基因
+
+先定义x  与 y   ，x为自变量（若为分类变量则需要设置为哑变量），y为自变量（分为两类，一类为简单二分类，如是或否，另一类则为生存数据 包括生存状态及对应得生存时间）
+
+# 保留 OS、OS.time，以及列名属于 genes 的基因列
+keep_cols <- c("OS", "OS.time", intersect(genes, colnames(data_gene)))
+
+train <- data_gene[, keep_cols, drop = FALSE]   #这里的train为data，即包含数据及临床信息的,这里的genes是经过第一轮森林图筛选后显著的基因
+train$OS=as.numeric(train$OS)
+keep_cols <- c("OS.time", "OS", intersect(genes, colnames(train)))
+train<- train[, keep_cols, drop = FALSE]
+
+
+train <- train[!is.na(train$OS.time) & train$OS.time > 0, , drop = FALSE]
+train$OS.time <- as.numeric(as.character(train$OS.time))
+train$OS <- as.numeric(as.character(train$OS))
+
+
+x1 <- as.matrix(train[, 3:ncol(train)])
+x2 <- as.matrix(Surv(train$OS.time, train$OS))
+
+cvfit = cv.glmnet(x1, x2,
+                  nfold=10,
+                  family = "cox"
+)
+
+plot(cvfit)
+
+#此处使用`lambda min`
+cvfit$lambda.min #最佳lambda值
+
+
+fit <- glmnet(x1, x2,
+              family = "cox")
+
+plot(fit , xvar="lambda", label=TRUE) 
+
+dev.off()
+#最小值一个标准误时各变量的系数值
+coef.min = coef(cvfit, s = "lambda.min")
+#非零系数
+active.min = which(coef.min != 0)
+#非零变量，基因名
+geneids <- rownames(coef.min)[active.min]
+#提取选中的基因对应的coefficient，回归系数
+index.min = coef.min[active.min]
+#按列合并两个变量
+combine <- cbind(geneids, index.min)
+#将数据转换为数据框
+lasso.result<-as.data.frame(combine)
+lasso.result$index.min<-as.numeric(lasso.result$index.min)
+
+####
+⭐⭐随机森林
+#随机森林分析
+
+fit <- rfsrc(Surv(OS.time,OS)~., data = train,
+             ntree = 1000, nodesize = 14,
+             splitrule = 'logrank',
+             importance = T,
+             proximity = T,
+             forest = T)
+
+plot(fit)
+dev.off()
+#筛选特征基因
+rftop<-var.select(fit)
+#将数据类型转化为数据框
+rftop2<-data.frame(
+  Feature=rftop$topvars,
+  vimp=rftop$varselect[rftop$topvars,2])
+
+
+####VN
+
+#两个机器学习模型
+gene<-list(LASSO=geneids,
+           RF=rftop2$Feature)
+
+ggvenn(gene,
+       fill_color = c("#0073C2FF", "#EFC000FF"),
+       stroke_size = 0.5,
+       set_name_size = 4)
+
+#两个相交基因
+intersect_genes <- intersect(gene$LASSO, gene$RF)
+intersect_genes
+
+
+
+#######KM曲线
+
+
+1. cox---https://chatgpt.com/c/684297f2-9cf0-8002-8ed3-7ed54fa6fab5
+# 载入必要包
+library(survival)
+library(survminer)
+
+# 1. 指定基因
+genes <-intersect_genes
+
+
+
+keep_cols <- c("OS.time", "OS", intersect(genes, colnames(train)))
+data_gene<- train[, keep_cols, drop = FALSE]
+
+
+# 2. 构建生存公式并拟合Cox模型
+formula_text <- paste("Surv(OS.time, OS) ~", paste(genes, collapse = " + "))
+cox_formula <- as.formula(formula_text)
+cox_model <- coxph(cox_formula, data = data_gene)
+
+# 3. 计算风险评分（risk score）
+data_gene$risk_score <- predict(cox_model, type = "risk")
+
+# 4. 按中位数将患者分为高/低风险组
+data_gene$risk_group <- ifelse(data_gene$risk_score > median(data_gene$risk_score), "High", "Low")
+
+# 5. 绘制生存曲线
+fit <- survfit(Surv(OS.time, OS) ~ risk_group, data = data_gene)
+ggsurvplot(fit,
+           data = data_gene,
+           pval = TRUE,
+           risk.table = TRUE,
+           title = "Survival Curve by Risk Score Group",
+           legend.title = "Risk Group",
+           legend.labs = c("High", "Low"),
+           palette = c("red", "blue"))
+
+
+2. KM 曲线
+
+cox得到得risk_score作为分组得标准
+
+
+ggsurvplot(fit, # 创建的拟合对象
+           data = data_gene,  # 指定变量数据来源
+           conf.int = TRUE, # 显示置信区间
+           pval = TRUE, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(d)", # 指定x轴标签
+           legend = c(0.8,0.75), # 指定图例位置
+           legend.title = "", # 设置图例标题
+           legend.labs = c("High risk", "Low risk"), # 指定图例分组标签
+           break.x.by = 500)  # 设置x轴刻度间距
+
+##公式
+# 3) 提取系数（β）
+betas <- coef(cox_model)                # 命名向量，names(betas)是基因名
+betas_round <- round(betas, 4)          # 便于排版
+
+# 4) 生成“可写进论文”的 RS 公式（线性预测器形式）
+eq <- paste0(
+  "RS = ",
+  paste(sprintf("%.4f*%s", betas_round, names(betas_round)), collapse = " + ")
+)
+cat(eq, "\n")
+
+
+##################柱状图
+
+
+
+
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+
+# 假设你的表达矩阵名为 exp
+# 第一列是分组，列名为 "group"，其余是基因表达
+
+# 将数据转为长格式（便于 ggplot 作图）
+
+exp <- data_gene[, setdiff(3:ncol(data_gene), ncol(data_gene) - 1)]  ##这俩爹data_gene是经过森林图及机器学习筛选后的gene
+colnames(exp)[ncol(exp)] <- "group"
+exp_long <- melt(exp, id.vars = "group", variable.name = "Gene", value.name = "Expression")
+
+# 将 group 转换为因子（保证作图排序和统计正确）
+exp_long$group <- factor(exp_long$group)
+
+
+
+
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(ggpubr)
+
+library(ggpubr)  # 确保已加载，提供 stat_pvalue_manual
+
+plot_one_gene <- function(g){
+  df <- exp_long %>% dplyr::filter(Gene == g) %>% droplevels()
+  
+  # 保证分组顺序
+  df$group <- factor(df$group, levels = c("High","Low"))
+  
+  y_min <- min(df$Expression, na.rm = TRUE)
+  y_max <- max(df$Expression, na.rm = TRUE)
+  y_pad <- max(0.06 * (y_max - y_min), 0.25)   # 横线与图顶的间距
+  
+  # 只有当两组都存在时才做检验+标注
+  has_two_groups <- all(c("High","Low") %in% levels(droplevels(df$group))) &&
+    length(unique(na.omit(df$group))) == 2
+  
+  if (has_two_groups) {
+    pval <- tryCatch(
+      wilcox.test(Expression ~ group, data = df)$p.value,
+      error = function(e) NA_real_
+    )
+    p_lab <- if (is.na(pval)) "NA" else if (pval < 1e-4) "<0.0001" else paste0("P = ", signif(pval, 3))
+    
+    # ✅ 用 group1 / group2（不要 xmin/xmax）
+    df_bracket <- data.frame(
+      group1 = "High",
+      group2 = "Low",
+      y.position = y_max + y_pad,
+      label = p_lab
+    )
+  }
+  
+  p <- ggplot(df, aes(group, Expression, fill = group)) +
+    geom_violin(trim = FALSE, width = 0.9, alpha = 0.95, color = "black") +
+    geom_boxplot(width = 0.16, fill = "white", color = "black", outlier.shape = NA) +
+    scale_fill_manual(values = pal, guide = "none") +
+    labs(x = NULL, y = g) +                 # Y 轴标题=基因名
+    theme_classic(base_size = 14) +
+    scale_y_continuous(expand = expansion(mult = c(0.02, 0.20))) +
+    theme(
+      plot.title  = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text.x  = element_text(size = 12),
+      axis.line.x  = element_line(color = "black"),
+      axis.ticks.x = element_line(color = "black"),
+      axis.line.y  = element_line(color = "black"),
+      axis.ticks.y = element_line(color = "black"),
+      axis.text.y  = element_text(size = 12),
+      axis.title.y = element_text(size = 13, face = "bold")
+    )
+  
+  # 只有两组都在时再叠加横线+P值
+  if (has_two_groups) {
+    p <- p + stat_pvalue_manual(
+      df_bracket,
+      label = "label",
+      y.position = "y.position",
+      tip.length = 0, bracket.size = 0.6, size = 4,
+      inherit.aes = FALSE
+    )
+  }
+  
+  return(p)
+}
+
+
+genes_to_plot=intersect_genes
+pal <- c(High = "#E64B35", Low = "#4A7BD0")
+
+plist   <- lapply(genes_to_plot, plot_one_gene)
+p_final <- patchwork::wrap_plots(plist, ncol = 3)
+p_final
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(patchwork)
+
+# 动态按“2 行”排版：自动计算列数
+ncol_now <- ceiling(length(plist) / 2)
+p_final <- wrap_plots(plist, nrow = 2, ncol = ncol_now)
+p_final
+只想简单固定 2 行、不管列数：
+p_final <- wrap_plots(plist, nrow = 2)
+
+
+
+
+## 1) 定义调色板（一定要先于 plot_one_gene 调用）
+pal <- c(High = "#E64B35", Low = "#4A7BD0")
+# 也可用你喜欢的颜色，但名字必须和分组水平一致：High / Low
+
+## 2)（可选）确认 exp_long 中确实有 High/Low
+table(exp_long$group)
+# 如果不是因子，可先：
+# exp_long$group <- factor(exp_long$group, levels = c("High","Low"))
+
+## 3) 生成图列表（加上防崩护栏，单个基因失败不影响其它）
+plist <- lapply(genes_to_plot, function(g) {
+  tryCatch(plot_one_gene(g),
+           error = function(e) { message("跳过 ", g, ": ", e$message); NULL })
+})
+plist <- Filter(Negate(is.null), plist)
+stopifnot(length(plist) > 0)   # 一个都没成功就报错中止，避免后续空拼图
+
+## 4) 拼图 + 保存
+p_final <- patchwork::wrap_plots(plist, ncol = 3)
+print(p_final)
+ggsave("violin_genes.pdf", p_final, width = 10, height = 10)
+ggsave("violin_genes.png", p_final, width = 10, height = 10, dpi = 300)
+
+
+
+
+
+报错后
+
+genes_to_plot=intersect_genes
+pal <- c(High = "#E64B35", Low = "#4A7BD0")
+
+# 3) 若有些基因在 exp_long 里不存在，先滤掉，避免空图
+#genes_to_plot <- intersect(genes_to_plot, unique(exp_long$Gene))
+#genes_to_plot =genes
+
+# 4) 你的函数原样用即可（已经兼容 ggpubr 的 group1/group2 语法）
+#    ……此处不再重复粘贴 plot_one_gene ……
+
+# 5) 生成每个基因的图
+plist <- lapply(genes_to_plot, plot_one_gene)
+
+# 6) 用 patchwork 拼成一页（可调列数）
+library(patchwork)
+p_all <- wrap_plots(plist, ncol = 4)
+p_all
+
+###############################
+#############################
+3.风险银子三联图
+https://mp.weixin.qq.com/s/y8lfnQCFxSQOf-O5rpopPQ  
+
+library(ggplot2)
+library(pheatmap)
+library(ggplotify)
+library(cowplot)
+
+
+dt <-data_gene
+colnames(dt)
+
+colnames(dt)[1]="OS"
+colnames(dt)[2]="status"
+colnames(dt)[？]="score"
+dt <- dt[order(dt$score,decreasing = F),] #按风险评分从低到高排序
+dt$id <- c(1:length(dt$score)) #根据调整后顺序建立编号id
+dt$status <- ifelse(dt$status==0,'alive','death') #0/1转换为字符生死
+dt$status <- factor(dt$status,levels = c("death","alive")) #指定因子调整顺序
+dt$Risk_Group <- ifelse(dt$score<median(dt$score),'Low Risk','High Risk') #将风险评分按中位数拆分为高/低风险两组
+dt$Risk_Group <- factor(dt$Risk_Group,levels = c('Low Risk','High Risk')) 
+
+
+
+###exp 只保留gene表达矩阵，其他信息不要
+exp <- dt[,c(3,4,6,7,5)] 
+
+
+#先三个图分别绘制，最后拼接起来；
+#1.1.风险评分散点图绘制：
+p1 <- ggplot(dt,aes(x = id,y = score)) +
+  geom_point(aes(col = Risk_Group)) +
+  scale_colour_manual(values = c("blue","red")) +
+  geom_hline(yintercept = median(dt$score), colour="grey", linetype="dashed", size=0.8) +
+  geom_vline(xintercept = sum(dt$Risk_Group == "Low Risk"), colour="grey", linetype = "dashed", size = 0.8) +
+  theme_bw()
+p1
+
+
+#1.2.患者生存时间散点图绘制：
+p2 <- ggplot(dt,aes(x = id,y = OS)) +
+  geom_point(aes(col = status)) +
+  scale_colour_manual(values = c("red","blue")) +
+  geom_vline(xintercept = sum(dt$Risk_Group == "Low Risk"), colour = "grey", linetype = "dashed", size = 0.8) +
+  theme_bw()
+p2
+
+
+
+
+mycol <- colorRampPalette(c("blue","white","red"))(100) 
+exp2 <- t(scale(exp)) 
+
+
+
+#添加分组信息：
+annotation <- data.frame(Type = as.vector(dt[,10])) ###这里10是分组信息对应的列
+rownames(annotation) <- colnames(exp2)
+annotation$Type <- factor(annotation$Type,levels = c('Low Risk','High Risk'))
+head(annotation)
+
+
+ann_colors <- list(Type = c('Low Risk' = "blue",
+                            'High Risk' = "red")) 
+
+
+
+######breaks = seq(-3,3,length.out = 100) 可变
+pheatmap(exp2,
+         col= mycol,
+         cluster_rows = F,
+         cluster_cols = F,
+         show_colnames = F,
+         annotation_col = annotation,
+         annotation_colors = ann_colors,
+         annotation_legend = F,
+         scale = "row", #对每一行进行标准化
+         breaks = seq(-3,3,length.out = 100),
+)
+
+
+
+#将热图转化为ggplot2对象：
+p3 <- as.ggplot(as.grob(pheatmap(exp2,
+                                 col= mycol,
+                                 cluster_rows = F,
+                                 cluster_cols = F,
+                                 show_colnames = F,
+                                 annotation_col = annotation,
+                                 annotation_colors = ann_colors,
+                                 annotation_legend = F,
+                                 scale = "row", #对每一行进行标准化
+                                 breaks = seq(-3,3,length.out = 100),
+                                 
+)))
+
+
+plot_grid(p1,p2,p3, nrow = 3, align = "v", axis = "tlbr") #可
+
+
+###########
+###########
+4.ROC-1-3-5年曲线
+https://mp.weixin.qq.com/s/SpoqEAXocnA4cwdIDKK4hg
+
+library(timeROC)
+library(survival)
+
+data1=data_gene[,c(1,2,11)]  #只要状态及频分
+data1$OS.time=data1$OS.time/365
+
+
+
+
+## 构建timeROC
+ROC <- timeROC(T=data1$OS.time, #生存时间
+               delta=data1$OS,   #生存状态
+               marker=data1$risk_score, #计算timeROC的变量
+               cause=1,                #阳性结局指标数值(1表示死亡)
+               weighting="marginal",   #计算方法，默认为marginal
+               times=c(1, 3, 5),       #时间点，选取1年，3年和5年的生存率
+               iid=TRUE)
+ROC
+
+
+
+
+
+
+## 绘制 timeROC（正方形画布 + 正方形绘图区域）
+pdf("timeROC_正方形.pdf", width = 8, height = 8)   # ① 设备设为正方形
+
+op <- par(pty = "s",                      # ② 绘图区域强制为 square
+          mar = c(5,5,1.5,1.5),          #   收紧边距避免“看起来不方”
+          xaxs = "i", yaxs = "i")        #   轴不留额外空白
+
+plot(ROC,
+     time = 1, col = "red",   lty = 1, lwd = 2,
+     xlim = c(0,1), ylim = c(0,1),       # 明确范围，配合 pty="s"
+     main = "")
+
+plot(ROC, time = 3, col = "blue",   add = TRUE, lty = 1, lwd = 2)
+plot(ROC, time = 5, col = "orange", add = TRUE, lty = 1, lwd = 2)
+
+abline(0, 1, lty = 3)  # 需要对角虚线的话（有则可省）
+
+legend("bottomright",
+       c(paste0("AUC at 1 year: ", round(ROC[["AUC"]][1], 2)),
+         paste0("AUC at 3 year: ", round(ROC[["AUC"]][2], 2)),
+         paste0("AUC at 5 year: ", round(ROC[["AUC"]][3], 2))),
+       col = c("red","blue","orange"), lty = 1, lwd = 2, bty = "n")
+
+par(op)
+dev.off()
+
+###########
+###########
+5.验证集km曲线
+1. cox---https://chatgpt.com/c/684297f2-9cf0-8002-8ed3-7ed54fa6fab5
+# 载入必要包
+library(survival)
+library(survminer)
+
+# 1. 指定基因
+
+
+keep_cols <- c("OS.time", "OS", intersect(genes, colnames(data_gene)))
+data_gene<- data_gene[, keep_cols, drop = FALSE]
+
+
+data_gene <- data_gene[!is.na(data_gene$OS.time) & data_gene$OS.time > 0, , drop = FALSE]
+
+
+#若是一个基因
+###cox_model <- coxph(Surv(OS.time, OS) ~ SMAD3, data = dat
+
+
+# 2. 构建生存公式并拟合Cox模型
+formula_text <- paste("Surv(OS.time, OS) ~", paste(genes, collapse = " + "))
+cox_formula <- as.formula(formula_text)
+cox_model <- coxph(cox_formula, data = data_gene)
+
+# 3. 计算风险评分（risk score）
+data_gene$risk_score <- predict(cox_model, type = "risk")
+
+# 4. 按中位数将患者分为高/低风险组
+data_gene$risk_group <- ifelse(data_gene$risk_score > median(data_gene$risk_score), "High", "Low")
+
+# 5. 绘制生存曲线
+fit <- survfit(Surv(OS.time, OS) ~ risk_group, data = data_gene)
+ggsurvplot(fit,
+           data = data_gene,
+           pval = TRUE,
+           risk.table = TRUE,
+           title = "Survival Curve by Risk Score Group",
+           legend.title = "Risk Group",
+           legend.labs = c("High", "Low"),
+           palette = c("red", "blue"))
+
+
+2. KM 曲线
+
+cox得到得risk_score作为分组得标准
+
+
+ggsurvplot(fit, # 创建的拟合对象
+           data = data_gene,  # 指定变量数据来源
+           conf.int = TRUE, # 显示置信区间
+           pval = TRUE, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(d)", # 指定x轴标签
+           legend = c(0.8,0.75), # 指定图例位置
+           legend.title = "", # 设置图例标题
+           legend.labs = c("High risk", "Low risk"), # 指定图例分组标签
+           break.x.by = 500)  # 设置x轴刻度间距
+
+
+
+
+
+
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+
+# 假设你的表达矩阵名为 exp
+# 第一列是分组，列名为 "group"，其余是基因表达
+
+# 将数据转为长格式（便于 ggplot 作图）
+
+exp <- data_gene[, setdiff(3:ncol(data_gene), ncol(data_gene) - 1)]
+colnames(exp)[ncol(exp)] <- "group"
+exp_long <- melt(exp, id.vars = "group", variable.name = "Gene", value.name = "Expression")
+
+# 将 group 转换为因子（保证作图排序和统计正确）
+exp_long$group <- factor(exp_long$group)
+
+
+
+
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(ggpubr)
+
+library(ggpubr)  # 确保已加载，提供 stat_pvalue_manual
+
+plot_one_gene <- function(g){
+  df <- exp_long %>% dplyr::filter(Gene == g) %>% droplevels()
+  
+  # 保证分组顺序
+  df$group <- factor(df$group, levels = c("High","Low"))
+  
+  y_min <- min(df$Expression, na.rm = TRUE)
+  y_max <- max(df$Expression, na.rm = TRUE)
+  y_pad <- max(0.06 * (y_max - y_min), 0.25)   # 横线与图顶的间距
+  
+  # 只有当两组都存在时才做检验+标注
+  has_two_groups <- all(c("High","Low") %in% levels(droplevels(df$group))) &&
+    length(unique(na.omit(df$group))) == 2
+  
+  if (has_two_groups) {
+    pval <- tryCatch(
+      wilcox.test(Expression ~ group, data = df)$p.value,
+      error = function(e) NA_real_
+    )
+    p_lab <- if (is.na(pval)) "NA" else if (pval < 1e-4) "<0.0001" else paste0("P = ", signif(pval, 3))
+    
+    # ✅ 用 group1 / group2（不要 xmin/xmax）
+    df_bracket <- data.frame(
+      group1 = "High",
+      group2 = "Low",
+      y.position = y_max + y_pad,
+      label = p_lab
+    )
+  }
+  
+  p <- ggplot(df, aes(group, Expression, fill = group)) +
+    geom_violin(trim = FALSE, width = 0.9, alpha = 0.95, color = "black") +
+    geom_boxplot(width = 0.16, fill = "white", color = "black", outlier.shape = NA) +
+    scale_fill_manual(values = pal, guide = "none") +
+    labs(x = NULL, y = g) +                 # Y 轴标题=基因名
+    theme_classic(base_size = 14) +
+    scale_y_continuous(expand = expansion(mult = c(0.02, 0.20))) +
+    theme(
+      plot.title  = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text.x  = element_text(size = 12),
+      axis.line.x  = element_line(color = "black"),
+      axis.ticks.x = element_line(color = "black"),
+      axis.line.y  = element_line(color = "black"),
+      axis.ticks.y = element_line(color = "black"),
+      axis.text.y  = element_text(size = 12),
+      axis.title.y = element_text(size = 13, face = "bold")
+    )
+  
+  # 只有两组都在时再叠加横线+P值
+  if (has_two_groups) {
+    p <- p + stat_pvalue_manual(
+      df_bracket,
+      label = "label",
+      y.position = "y.position",
+      tip.length = 0, bracket.size = 0.6, size = 4,
+      inherit.aes = FALSE
+    )
+  }
+  
+  return(p)
+}
+
+genes_to_plot =genes
+pal <- c(High = "#E64B35", Low = "#4A7BD0")
+
+plist   <- lapply(genes_to_plot, plot_one_gene)
+p_final <- patchwork::wrap_plots(plist, ncol = 3)
+p_final
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(patchwork)
+
+# 动态按“2 行”排版：自动计算列数
+ncol_now <- ceiling(length(plist) / 2)
+p_final <- wrap_plots(plist, nrow = 2, ncol = ncol_now)
+p_final
+只想简单固定 2 行、不管列数：
+p_final <- wrap_plots(plist, nrow = 2)
+
+
+## 1) 定义调色板（一定要先于 plot_one_gene 调用）
+pal <- c(High = "#1B9E77", Low = "#D95F02")
+# 也可用你喜欢的颜色，但名字必须和分组水平一致：High / Low
+
+## 2)（可选）确认 exp_long 中确实有 High/Low
+table(exp_long$group)
+# 如果不是因子，可先：
+# exp_long$group <- factor(exp_long$group, levels = c("High","Low"))
+
+## 3) 生成图列表（加上防崩护栏，单个基因失败不影响其它）
+plist <- lapply(genes_to_plot, function(g) {
+  tryCatch(plot_one_gene(g),
+           error = function(e) { message("跳过 ", g, ": ", e$message); NULL })
+})
+plist <- Filter(Negate(is.null), plist)
+stopifnot(length(plist) > 0)   # 一个都没成功就报错中止，避免后续空拼图
+
+## 4) 拼图 + 保存
+p_final <- patchwork::wrap_plots(plist, ncol = 3)
+print(p_final)
+ggsave("violin_genes.pdf", p_final, width = 10, height = 10)
+ggsave("violin_genes.png", p_final, width = 10, height = 10, dpi = 300)
+
+
+报错后
+
+genes_to_plot =genes
+pal <- c(High = "#E64B35", Low = "#4A7BD0")
+
+# 3) 若有些基因在 exp_long 里不存在，先滤掉，避免空图
+
+
+# 4) 你的函数原样用即可（已经兼容 ggpubr 的 group1/group2 语法）
+#    ……此处不再重复粘贴 plot_one_gene ……
+
+# 5) 生成每个基因的图
+plist <- lapply(genes_to_plot, plot_one_gene)
+
+# 6) 用 patchwork 拼成一页（可调列数）
+library(patchwork)
+p_all <- wrap_plots(plist, ncol = 4)
+p_all
+
+#############
+##############
+6.你可以使用 ggplot2 和 ggpubr 包在 R 中绘制基因表达的小提琴图，并添加显著性检验的 P 值。下面是一个完整的示例代码，适用于你提供的格式（第一列为分组信息，后续列为多个基因表达值）：
+
+✅【示例代码】
+r
+复制
+编辑
+# 安装需要的包（如未安装请取消注释）
+# install.packages("ggplot2")
+# install.packages("ggpubr")
+# install.packages("reshape2")
+
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+
+# 假设你的表达矩阵名为 exp
+# 第一列是分组，列名为 "group"，其余是基因表达
+
+# 将数据转为长格式（便于 ggplot 作图）
+
+exp <- data_gene[, setdiff(3:ncol(data_gene), ncol(data_gene) - 1)]
+colnames(exp)[ncol(exp)] <- "group"
+exp_long <- melt(exp, id.vars = "group", variable.name = "Gene", value.name = "Expression")
+
+# 将 group 转换为因子（保证作图排序和统计正确）
+exp_long$group <- factor(exp_long$group)
+
+# 画小提琴图 + 添加统计检验
+p <- ggviolin(exp_long, 
+              x = "group", 
+              y = "Expression", 
+              fill = "group", 
+              palette = "jco",         # 配色方案，"jco" 是 Journal of Clinical Oncology 风格
+              facet.by = "Gene",       # 每个基因一个子图
+              short.panel.labs = FALSE,
+              add = "boxplot",         # 添加箱线图
+              add.params = list(fill = "white"), # 箱线图颜色
+              trim = FALSE) +
+  stat_compare_means(method = "wilcox.test", # 或 "t.test"，依据数据分布
+                     label = "p.format", 
+                     hide.ns = TRUE) +       # 隐藏不显著的p值
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 显示图
+print(p)
+📌说明：
+melt()：将宽数据转为长格式，便于 ggplot 分面作图。
+
+facet.by = "Gene"：每个基因生成一个小提琴图子图。
+
+stat_compare_means()：添加 p 值，默认使用 wilcox.test，你也可以改为 t.test。
+
+palette = "jco"：优雅配色方案之一，你还可以试试 "npg", "lancet", "nejm" 等。
+
+theme_minimal()：让图更清爽。
+
+✅如果你只想画单个基因的小提琴图：
+r
+复制
+编辑
+ggviolin(exp, x = "group", y = "Gene1", fill = "group",
+         palette = "npg", add = "boxplot", add.params = list(fill = "white")) +
+  stat_compare_means(method = "t.test") +
+  theme_minimal()

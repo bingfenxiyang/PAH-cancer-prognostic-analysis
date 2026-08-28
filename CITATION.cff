@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the associated article."
+title: "Reproducible pan-cancer prognostic analysis of PAH-associated candidate genes"
+type: software
+authors:
+  - family-names: "AUTHOR_INPUT_NEEDED"
+    given-names: "AUTHOR_INPUT_NEEDED"
+version: 0.1.0
+date-released: 2026-08-28
+license: MIT
+repository-code: "AUTHOR_INPUT_NEEDED"
+
